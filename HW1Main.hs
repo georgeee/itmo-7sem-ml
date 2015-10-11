@@ -37,7 +37,6 @@ algos :: HM.Map String (Options -> IO ())
 algos = HM.fromList [ ("knn1", knn1Algo)
                     , ("knn2", knn2Algo)
                     , ("knn3", knn3Algo)
-                    , ("test1", test1Algo)
                     ]
 
 knnReadPoints :: String -> IO [SamplePoint]
@@ -79,9 +78,6 @@ knn3Algo opts = knnAlgo (knn3TestConfig gc) forPrint opts
   where
     gc = optGC opts
     forPrint (Knn2Config k g' t, e) = (Kd.toList t, k, g', e)
-
-test1Algo = generalAlgo knnReadPoints $ return . algo
-  where algo ps = Kd.kNearestNeighbors (Kd.fromList ps) 4 (0, 0, 0)
 
 options :: [ OptDescr (Options -> IO Options) ]
 options =
