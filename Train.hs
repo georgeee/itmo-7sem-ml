@@ -27,7 +27,7 @@ listsByDivision = l' []
   where
     l' _ [] = []
     l' acc (a:as) = el `seq` el : l' (acc ++ a) as
-      where el = (a, acc ++ (concat as))
+      where el = (acc ++ (concat as), a)
 
 tkFoldCv :: Int -> Int -> RandSplitter s
 tkFoldCv t k ds = (sequence $ replicate t (kFoldCV k ds)) >>= return . concat

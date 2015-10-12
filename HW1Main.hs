@@ -4,7 +4,7 @@ module Main (main) where
 import System.Console.GetOpt
 import Control.Monad
 import Data.Maybe
-import qualified Data.Trees.KdTree as Kd
+import qualified Data.KdMap.Static as Kd
 import qualified "hashmap" Data.HashMap as HM
 import Train
 import Data.List
@@ -39,7 +39,7 @@ algos = HM.fromList [ ("knn1", knn1Algo)
                     , ("knn3", knn3Algo)
                     ]
 
-knnReadPoints :: String -> IO [SamplePoint]
+knnReadPoints :: String -> IO [(RequestPoint, Class)]
 knnReadPoints = fmap (map fromJust . filter isJust) . sequence . map readP . lines
 readP l = let ws = words l
            in if length ws < 3
@@ -50,7 +50,7 @@ readP l = let ws = words l
 readP' ws = do x <- readD 0
                y <- readD 1
                c <- readI 2
-               return (x, y, c)
+               return ((x, y), c)
   where
     readD i = maybeRead (map (\c -> if c == ',' then '.' else c) $ ws !! i) :: Maybe Double
     readI i = maybeRead (ws !! i) :: Maybe Int
@@ -67,17 +67,17 @@ knnAlgo testConfig printHelper = generalAlgo knnReadPoints $ evalRandIO . algo
 
 knn1Algo = knnAlgo knn1TestConfig forPrint
   where
-    forPrint ((k, t), e) = (Kd.toList t, k, e)
+    forPrint ((k, t), e) = (Kd.assocs t, k, e)
 
 knn2Algo opts = knnAlgo (knn2TestConfig g) forPrint opts
   where
     g = optG opts
-    forPrint (Knn2Config k g' t, e) = (Kd.toList t, k, g', e)
+    forPrint (Knn2Config k g' t, e) = (Kd.assocs t, k, g', e)
 
 knn3Algo opts = knnAlgo (knn3TestConfig gc) forPrint opts
   where
     gc = optGC opts
-    forPrint (Knn2Config k g' t, e) = (Kd.toList t, k, g', e)
+    forPrint (Knn2Config k g' t, e) = (Kd.assocs t, k, g', e)
 
 options :: [ OptDescr (Options -> IO Options) ]
 options =

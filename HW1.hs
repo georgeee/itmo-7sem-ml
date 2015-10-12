@@ -1,6 +1,6 @@
 {-# LANGUAGE PackageImports, TypeSynonymInstances, FlexibleInstances, BangPatterns #-}
 module HW1 where
-import qualified Data.Trees.KdTree as Kd
+import qualified Data.KdMap.Static as Kd
 import Control.Monad.Random
 import Train
 import Data.Ord
@@ -15,8 +15,13 @@ type Class = Int
 kMin = 1
 kMax = 20
 
-type SamplePoint = (Double, Double, Class)
 type RequestPoint = (Double, Double)
+
+buildKdTree :: [(RequestPoint, Class)] -> KdMap
+buildKdTree = Kd.build (\(x, y) -> [x, y])
+sqrDist = Kd.defaultSqrDist (\(x, y) -> [x, y])
+
+type KdMap = Kd.KdMap Double RequestPoint Class
 
 tuple3To2 (x, y, _) = (x, y)
 tuple2To3 z (x, y) = (x, y, z)
@@ -26,19 +31,16 @@ dpx (x, _, _) = x
 dpy (_, y, _) = y
 dpc (_, _, c) = c
 
-instance Kd.Point SamplePoint where
-  dimension = const 2
-  coord 0 = dpx
-  coord 1 = dpy
-  dist2 = minkowskiDistance 2
 
-type KnnTestConfig c = TestConfig SamplePoint c Double
 
-knnTest :: (conf -> RequestPoint -> Class) -> [SamplePoint] -> conf -> Double
-knnTest impl ps conf = fScore list
-  where f (x, y, c) = (impl conf (x, y), c)
+type KnnTestConfig c = TestConfig (RequestPoint, Class) c Double
+
+knnTest :: (conf -> RequestPoint -> Class) -> [(RequestPoint, Class)] -> conf -> Double
+knnTest impl ps conf = sScore list
+  where f (p, cl) = (impl conf p, cl)
         list = map f ps
 
+sScore ps = (fromIntegral $ length $ filter id $ map (\(x, y) -> x == y) ps) / (fromIntegral $ length ps)
 
 -- [(guessed class, real class)]
 fScore :: [(Class, Class)] -> Double
@@ -55,57 +57,68 @@ fScore list = if isNaN val then 0 else val
     a u v = fromIntegral $ length $ filter (== (u, v)) list
 
 
-trainByK :: (conf -> RequestPoint -> Class) -> (Kd.KdTree SamplePoint) -> (Int -> (Kd.KdTree SamplePoint) -> conf) -> (Int, Int)
-trainByK !impl !tree !confConstructor = minimumBy (comparing snd) $ trainByK' impl tree confConstructor
+trainByK impl' = minimumBy (comparing snd) . trainByK' impl'
 
-trainByK' :: (conf -> RequestPoint -> Class) -> (Kd.KdTree SamplePoint) -> (Int -> (Kd.KdTree SamplePoint) -> conf) -> [(Int, Int)]
-trainByK' !impl !tree !confConstructor = map tryK [kMin..kMax]
+trainByK' :: (Int -> KdMap -> RequestPoint -> Class) -> KdMap -> [(Int, Int)]
+trainByK' impl' tree = map tryK [kMin..kMax]
   where
     tryK :: Int -> (Int, Int)
-    tryK !k = (k, F.foldl' (flip f) 0 tree)
+    tryK !k = (k, Kd.foldrWithKey f 0 tree)
       where
-        f !p = if dpc p == test' p then id else (+1)
-        test' p = impl (confConstructor k $ tree `Kd.remove` p) (tuple3To2 p)
+        f (p, cl) = if cl == test' p then id else (+1)
+        test' p = impl' k tree p
 
-type Knn1Config = (Int, Kd.KdTree SamplePoint)
+type Knn1Config = (Int, KdMap)
 
 knn1 :: Knn1Config -> RequestPoint -> Class
-knn1 (k, tree) = fst . maximumBy (comparing snd) . countUnique . map dpc . Kd.kNearestNeighbors tree k . tuple2To3 (-1)
+knn1 (k, tree) = fst . maximumBy (comparing snd) . countUnique . map snd . Kd.kNearest tree k
 
-knn1Train :: [SamplePoint] -> Knn1Config
-knn1Train ps = (fst $ trainByK knn1 tree (,), tree)
+knn1' :: Int -> KdMap -> RequestPoint -> Class
+knn1' k tree = fst . maximumBy (comparing snd) . countUnique . map snd . tail . Kd.kNearest tree (k + 1)
+
+knn1Train :: [(RequestPoint, Class)] -> Knn1Config
+knn1Train ps = (fst $ trainByK knn1' tree, tree)
   where
-    tree = Kd.fromList ps
+    tree = buildKdTree ps
 
 knn1TestConfig :: KnnTestConfig Knn1Config -- Trying only k
 knn1TestConfig = TestConfig { train = return . knn1Train, test = knnTest knn1 }
 
 data Knn2Config = Knn2Config { knn2K :: !Int
                              , knn2G :: !Double
-                             , knn2Tree :: !(Kd.KdTree SamplePoint)
+                             , knn2Tree :: !KdMap
                              }
     deriving Show
 
 knn2 :: Knn2Config -> RequestPoint -> Class
-knn2 (Knn2Config k g tree) = fst . maximumBy (comparing snd) . sumByClass . measurePoints . tuple2To3 (-1)
+knn2 (Knn2Config k g tree) = fst . maximumBy (comparing snd) . sumByClass . measurePoints
   where
-    measurePoints !p = F.foldr' (\n ns -> (dpc n, measureP n) : ns) [] tree
-     where kthNeighbor = last $ Kd.kNearestNeighbors tree (k + 1) p
-           measureP n = kthNeighbor `seq` gaussianKernel g $ (Kd.dist2 p n) / (Kd.dist2 kthNeighbor p)
+    measurePoints !p = Kd.foldrWithKey f [] tree
+     where kthNeighbor = fst $ last $ Kd.kNearest tree (k + 1) p
+           measureP' n = kthNeighbor `seq` gaussianKernel g $ (sqrDist p n) / (sqrDist kthNeighbor p)
+           f (n, cl) = ((cl, measureP' n) :)
 
-knn2Train :: Double -> [SamplePoint] -> Knn2Config
+knn2' :: Double -> Int -> KdMap -> RequestPoint -> Class
+knn2' g k tree = fst . maximumBy (comparing snd) . sumByClass . measurePoints
+  where
+    measurePoints !p = Kd.foldrWithKey f [] tree
+     where kthNeighbor = fst $ last $ Kd.kNearest tree (k + 2) p
+           measureP' n = kthNeighbor `seq` gaussianKernel g $ (sqrDist p n) / (sqrDist kthNeighbor p)
+           f (n, cl) | n /= p  = ((cl, measureP' n) :)
+                     | otherwise = id
+
+knn2Train :: Double -> [(RequestPoint, Class)] -> Knn2Config
 knn2Train g = fst . knn2Train' g
 
 knn2Train' !g !ps = (tree `seq` Knn2Config cl g tree, q)
   where
-    (cl, q) = trainByK knn2 tree cons
-    tree = Kd.fromList ps
-    cons !k !tree' = Knn2Config k g tree'
+    (cl, q) = trainByK (knn2' g) tree
+    tree = buildKdTree ps
 
 knn2TestConfig :: Double -> KnnTestConfig Knn2Config
 knn2TestConfig g = TestConfig { train = return . knn2Train g, test = knnTest $! knn2 }
 
-knn3Train :: Int -> [SamplePoint] -> RandMonad Knn2Config
+knn3Train :: Int -> [(RequestPoint, Class)] -> RandMonad Knn2Config
 knn3Train gc ps = getRandomRs (0, 1) >>= return . fst . minimumBy (comparing snd) . map (flip knn2Train' ps) . take gc
 
 knn3TestConfig :: Int -> KnnTestConfig Knn2Config
