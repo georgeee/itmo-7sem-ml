@@ -23,23 +23,14 @@ sqrDist = Kd.defaultSqrDist (\(x, y) -> [x, y])
 
 type KdMap = Kd.KdMap Double RequestPoint Class
 
-tuple3To2 (x, y, _) = (x, y)
-tuple2To3 z (x, y) = (x, y, z)
-
-
-dpx (x, _, _) = x
-dpy (_, y, _) = y
-dpc (_, _, c) = c
-
-
-
 type KnnTestConfig c = TestConfig (RequestPoint, Class) c Double
 
-knnTest :: (conf -> RequestPoint -> Class) -> [(RequestPoint, Class)] -> conf -> Double
-knnTest impl ps conf = sScore list
+knnTest :: (conf -> RequestPoint -> Class) -> ([(Class, Class)] -> Double) -> [(RequestPoint, Class)] -> conf -> Double
+knnTest impl score ps conf = score list
   where f (p, cl) = (impl conf p, cl)
         list = map f ps
 
+sScore :: [(Class, Class)] -> Double
 sScore ps = (fromIntegral $ length $ filter id $ map (\(x, y) -> x == y) ps) / (fromIntegral $ length ps)
 
 -- [(guessed class, real class)]
@@ -82,7 +73,7 @@ knn1Train ps = (fst $ trainByK knn1' tree, tree)
     tree = buildKdTree ps
 
 knn1TestConfig :: KnnTestConfig Knn1Config -- Trying only k
-knn1TestConfig = TestConfig { train = return . knn1Train, test = knnTest knn1 }
+knn1TestConfig = TestConfig { train = return . knn1Train, test = knnTest knn1 fScore, finalTestCoef = 0.2, finalTest = knnTest knn1 fScore }
 
 data Knn2Config = Knn2Config { knn2K :: !Int
                              , knn2G :: !Double
@@ -116,13 +107,13 @@ knn2Train' !g !ps = (tree `seq` Knn2Config cl g tree, q)
     tree = buildKdTree ps
 
 knn2TestConfig :: Double -> KnnTestConfig Knn2Config
-knn2TestConfig g = TestConfig { train = return . knn2Train g, test = knnTest $! knn2 }
+knn2TestConfig g = TestConfig { train = return . knn2Train g, test = knnTest knn2 fScore, finalTestCoef = 0.2, finalTest = knnTest knn2 fScore }
 
 knn3Train :: Int -> [(RequestPoint, Class)] -> RandMonad Knn2Config
 knn3Train gc ps = getRandomRs (0, 1) >>= return . fst . minimumBy (comparing snd) . map (flip knn2Train' ps) . take gc
 
 knn3TestConfig :: Int -> KnnTestConfig Knn2Config
-knn3TestConfig gc = TestConfig { train = knn3Train gc, test = knnTest $! knn2 }
+knn3TestConfig gc = TestConfig { train = knn3Train gc, test = knnTest knn2 fScore, finalTestCoef = 0.2, finalTest = knnTest knn2 fScore }
 
 sumByClass :: (Num a) => [(Class, a)] -> [(Class, a)]
 sumByClass = HM.toList . foldl f HM.empty

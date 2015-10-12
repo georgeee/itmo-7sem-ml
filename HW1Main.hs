@@ -86,7 +86,7 @@ options =
     , Option "a" ["algo"] (ReqArg algoArgParser "ALGO") $ "Algo to use, choose one of: " ++ (intercalate ", " (HM.keys algos))
     , Option "t" [] (ReqArg (intArgParser $ \v o -> o { optT = v })  "T") $ "t param"
     , Option "k" [] (ReqArg (intArgParser $ \v o -> o { optK = v })  "K") $ "k param"
-    , Option "gc" [] (ReqArg (intArgParser $ \v o -> o { optGC = v })  "GC") $ "gaussian kernel param tryout count"
+    , Option "c" [] (ReqArg (intArgParser $ \v o -> o { optGC = v })  "GC") $ "gaussian kernel param tryout count"
     , Option "g" [] (ReqArg (doubleArgParser $ \v o -> o { optG = v })  "G") $ "gaussian kernel param"
     , Option "h" ["help"] (NoArg $ const helpMsgPrinter) "Show help"
     ]

@@ -5,7 +5,7 @@ import Control.Monad
 import System.Random.Shuffle
 import qualified Data.List as L
 
-data TestConfig s c quality = TestConfig { train :: [s] -> RandMonad c, test :: [s] -> c -> quality}
+data TestConfig s c quality = TestConfig { train :: [s] -> RandMonad c, test :: [s] -> c -> quality, finalTestCoef :: Double, finalTest :: [s] -> c -> quality }
 
 trySamples :: TestConfig s c quality -> [s] -> [s] -> RandMonad (c, quality)
 trySamples tConf p q = do c <- train tConf $! p
@@ -33,5 +33,15 @@ tkFoldCv :: Int -> Int -> RandSplitter s
 tkFoldCv t k ds = (sequence $ replicate t (kFoldCV k ds)) >>= return . concat
 
 learn :: Ord quality => TestConfig s c quality -> RandSplitter s -> [s] -> RandMonad (c, quality)
-learn conf splitter ds = lists >>= sequence . map (uncurry (trySamples conf)) >>= return . L.maximumBy (comparing snd)
-  where lists = splitter $! ds
+learn conf splitter ds = do xs <- shuffleM ds
+                            let xs' = take len' xs
+                                xs'' = drop len' xs
+                            if L.null xs' || L.null xs'' then fail ("Wrong testCoef supplied: " ++ (show $ finalTestCoef conf)) else return ()
+                            (c, _) <- learn' xs''
+                            return (c, finalTest conf xs' c)
+  where
+    learn' xs = (splitter $! xs) >>= sequence . map (uncurry (trySamples conf)) >>= return . L.maximumBy (comparing snd)
+    len = length ds
+    len' = round $ (fromIntegral len) * (finalTestCoef conf)
+    ds' = take len' ds
+    ds'' = drop len' ds
