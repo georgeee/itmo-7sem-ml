@@ -5,7 +5,11 @@ import Control.Monad
 import System.Random.Shuffle
 import qualified Data.List as L
 
-data TestConfig s c quality = TestConfig { train :: [s] -> RandMonad c, test :: [s] -> c -> quality, finalTestCoef :: Double, finalTest :: [s] -> c -> quality }
+data TestConfig s c quality = TestConfig { train :: [s] -> RandMonad c
+                                         , test :: [s] -> c -> quality
+                                         , finalTestCoef :: Double
+                                         , finalTest :: [s] -> c -> quality
+                                         }
 
 trySamples :: TestConfig s c quality -> [s] -> [s] -> RandMonad (c, quality)
 trySamples tConf p q = do c <- train tConf $! p

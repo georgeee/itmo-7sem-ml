@@ -12,14 +12,31 @@ build-type:          Simple
 -- extra-source-files:  
 cabal-version:       >=1.10
 
-executable hw1
-  main-is:             HW1Main.hs
+executable knn
+  hs-source-dirs:      src
+  main-is:             KnnMain.hs
   -- other-modules:       
   -- other-extensions:    
-  build-depends:       base >=4.7 && <4.8,
+  build-depends:       base >=4.7,
                        kdt >= 0.2.3,
                        MonadRandom >= 0.1.7,
                        random-shuffle == 0.0.4,
+                       easyplot >= 1.0,
                        hashmap >= 1.3
-  -- hs-source-dirs:      
+                       -- hs-source-dirs:      
+  default-language:    Haskell2010
+
+executable svm
+  hs-source-dirs:      src
+  main-is:             SvmMain.hs
+  -- other-modules:       
+  -- other-extensions:    
+  build-depends:       base >=4.7,
+                       MonadRandom >= 0.1.7,
+                       random-shuffle == 0.0.4,
+                       hashmap >= 1.3,
+                       repa >= 3.4,
+                       easyplot >= 1.0,
+                       vector >= 0.10
+                       -- hs-source-dirs:      
   default-language:    Haskell2010

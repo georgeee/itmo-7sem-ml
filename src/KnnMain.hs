@@ -11,15 +11,16 @@ import Data.List
 import System.Exit
 import System.IO
 import System.Environment
-import HW1
+import Knn
+import Common
 import Control.Monad.Random
 
 
 data Options = Options  { optAlgo :: Options -> IO ()
                         , optInput :: IO String
                         , optOutput :: String -> IO ()
-                        , optK :: !Int
                         , optG :: !Double
+                        , optK :: !Int
                         , optT :: !Int
                         , optGC :: !Int
                         }
@@ -33,37 +34,18 @@ startOptions = Options { optAlgo = undefined
                        , optGC = 10
                        }
 
+generalAlgo :: Show a => (String -> IO b) -> (b -> IO a) -> Options -> IO ()
+generalAlgo reader f opts = optInput opts >>= reader >>= \s -> (f $! s) >>= optOutput opts . (++ "\n")  . show
+
 algos :: HM.Map String (Options -> IO ())
 algos = HM.fromList [ ("knn1", knn1Algo)
                     , ("knn2", knn2Algo)
                     , ("knn3", knn3Algo)
                     ]
 
-knnReadPoints :: String -> IO [(RequestPoint, Class)]
-knnReadPoints = fmap (map fromJust . filter isJust) . sequence . map readP . lines
-readP l = let ws = words l
-           in if length ws < 3
-              then return Nothing
-              else case readP' ws of
-                     Just p -> return $ Just p
-                     Nothing -> fail $ "Wrong input: " ++ l
-readP' ws = do x <- readD 0
-               y <- readD 1
-               c <- readI 2
-               return ((x, y), c)
-  where
-    readD i = maybeRead (map (\c -> if c == ',' then '.' else c) $ ws !! i) :: Maybe Double
-    readI i = maybeRead (ws !! i) :: Maybe Int
-
-maybeRead :: Read a => String -> Maybe a
-maybeRead = fmap fst . listToMaybe . reads
-
-generalAlgo :: Show a => (String -> IO b) -> (b -> IO a) -> Options -> IO ()
-generalAlgo reader f opts = optInput opts >>= reader >>= \s -> (f $! s) >>= optOutput opts . (++ "\n")  . show
-
 knnAlgo :: Show conf' => KnnTestConfig conf -> ((conf, Double) -> conf') -> Options -> IO ()
-knnAlgo testConfig printHelper = generalAlgo knnReadPoints $ evalRandIO . algo
-  where algo = learn testConfig (tkFoldCv 10 10) >=> return . printHelper
+knnAlgo testConfig printHelper opts = generalAlgo chipsReadPoints (evalRandIO . algo) opts
+  where algo = learn testConfig (tkFoldCv (optT opts) (optK opts)) >=> return . printHelper
 
 knn1Algo = knnAlgo knn1TestConfig forPrint
   where
