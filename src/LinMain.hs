@@ -27,7 +27,7 @@ data Options = Options  { optInput :: IO String
                         , optT :: !Int
                         , optPlot :: Bool
                         , optGLC :: Maybe GaussLiftConfig
-                        , optAlgo :: Options -> IO ()
+                        , optAlgo :: Algo
                         }
 
 startOptions = Options { optInput = getContents
@@ -71,8 +71,9 @@ options =
     --                        "rbf" -> return $ opt { optSF = \o -> rbf $ optG o }
     --                        s -> fail $ "Unknown similarity function: " ++ s
     algoArgParser arg opt = return $ opt { optAlgo = case arg of
-                                            ('s':_) -> linClassAlgo (undefined :: SvmAlgo)
-                                            ('l':_) -> linClassAlgo (undefined :: LogisticRegressionAlgo)
+                                            ('s':_) -> SvmAlgo
+                                            ('l':_) -> LogRegAlgo
+                                            _ -> error $ "Unknown algo: " ++ arg
                                          }
     helpMsgPrinter = do
                 prg <- getProgName
@@ -93,36 +94,34 @@ instance PlottablePoint DPoint2d where
 
 plots'' cr = map (\(cl, xs) -> cr cl xs) . collectByClass
 
-class Algo a where
-  testConfig :: Point p => a -> Options -> TestConfig (p, Class) (LinClassConfig p) Double
-
-linClassAlgo :: Algo a => a -> Options -> IO ()
+linClassAlgo :: Algo -> Options -> IO ()
 linClassAlgo algo opts = optInput opts >>= chipsReadPoints'
     >>= case optGLC opts of
           Just glc -> subAlgo algo opts . map (\(x, y) -> (gaussLift3d glc x, y))
           Nothing -> subAlgo algo opts
     >> return ()
 
-subAlgo :: (Algo a, Point p, Show p, PlottablePoint p) => a -> Options -> [(p, Class)] -> IO ()
+subAlgo :: (Point p, Show p, PlottablePoint p) => Algo -> Options -> [(p, Class)] -> IO ()
 subAlgo algo opts ps = (subAlgo' $! ps)
-                  >>= \(c, q) -> ((optOutput opts $ (++ "\n") $ show c)
+                  >>= \(c, q) -> ((optOutput opts $ (++ "\n") $ show $ (c, q))
                   >> when (optPlot opts) (plotPoints ps c >> return ()))
   where
     subAlgo' = evalRandIO . learn (testConfig algo opts) (tkFoldCv (optT opts) (optK opts))
 
-data SvmAlgo
-instance Algo SvmAlgo where
-  testConfig = const $ svmTestConfig . optC
+data Algo = SvmAlgo | LogRegAlgo
+  deriving Show
 
-data LogisticRegressionAlgo
-instance Algo LogisticRegressionAlgo where
-  testConfig = const $ logRegTestConfig . optH
+testConfig :: Point p => Algo -> Options -> TestConfig (p, Class) (LinClassConfig p) Double
+testConfig SvmAlgo = svmTestConfig . optC
+testConfig LogRegAlgo = logRegTestConfig . optH
 
 main = do
     args <- getArgs
     -- Parse options, getting a list of option actions
-    let (actions, nonOptions, errors) = getOpt RequireOrder options args
+    let (actions, nonOptions, errors) = getOpt Permute options args
     -- Here we thread startOptions through all supplied option actions
     opts <- foldl (>>=) (return startOptions) actions
 
-    optAlgo opts opts
+    putStrLn $ "Algo: " ++ (show $ optAlgo opts)
+
+    linClassAlgo (optAlgo opts) opts

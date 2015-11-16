@@ -1,11 +1,16 @@
 {-# LANGUAGE PackageImports, FlexibleInstances #-}
 module Common where
 
+import Data.Foldable
 import Control.Monad
 import Data.Maybe
 import qualified Data.List as L
 import qualified "hashmap" Data.HashSet as HS
 import qualified "hashmap" Data.HashMap as HM
+import qualified Data.Array as A
+import Control.Monad.Random
+
+type RandMonad s = Rand StdGen s
 
 errorAvg :: [Double] -> Double
 errorAvg l = let (sum', count) = foldl (\(x, y) el -> (x + el, y + 1)) (0, 0) l
@@ -28,8 +33,11 @@ class Point p where
   pMul' :: Real r => r -> p -> p
   pMul' = pMul . realToFrac
   pNull :: p
+  pMinus :: p -> p -> p
+  pMinus a b = a `pAdd` (-1) `pMul` b
 
 infixl 6 `pAdd`
+infixl 6 `pMinus`
 infixr 7 `pMul`
 infixr 7 `pMul'`
 
@@ -53,6 +61,16 @@ instance Point (Double, Double, Double) where
   pAdd (x1, y1, z1) (x2, y2, z2) = (x1 + x2, y1 + y2, z1 + z2)
   pMul a (x, y, z) = (a * x, a * y, a * z)
   pNull = (0, 0, 0)
+
+data LiftUp p = LiftUp p Double
+
+instance Point p => Point (LiftUp p) where
+  sqrDist (LiftUp p pz) (LiftUp q qz) = (sqrDist p q) + (s $ pz - qz)
+    where s x = x * x
+  dotProduct (LiftUp p pz) (LiftUp q qz) = (dotProduct p q) + pz * qz
+  pAdd (LiftUp p pz) (LiftUp q qz) = LiftUp (p `pAdd` q) (pz + qz)
+  pMul a (LiftUp p pz) = LiftUp (a `pMul` p) (a * pz)
+  pNull = LiftUp pNull 0
 
 type Class = Int
 type Point2d d = (d, d)
@@ -148,3 +166,36 @@ linearClassifier (LinClassConfig w w0) p = sgn $ (dotProduct p w) - w0
               | x > 0 = 1
               | otherwise = 0
 
+data SGDConfig = SGDConfig { sgdLoss :: Double -> Double
+                           , sgdLoss' :: Double -> Double
+                           , sgdTempo :: Double
+                           , sgdSmoothness :: Double
+                           , sgdPrec :: Double
+                           , sgdMaxIter :: Int
+                           }
+
+-- Stohastic gradient descent
+sgd :: Point p => SGDConfig -> [(p, Class)] -> RandMonad p
+sgd config points = step (sgdMaxIter config) pNull initQ
+  where ps = A.listArray (0, l) $ map (\(x, y) -> (x, fromIntegral y)) points
+        l = length points - 1
+        tempo = sgdTempo config
+        smth = sgdSmoothness config
+        lossF = lF $ sgdLoss config
+        lossF' = lF $ sgdLoss' config
+        lF f w (x, y) =  f (dotProduct w x) * y
+        initQ = foldr' ((+) . lossF pNull) 0 ps
+        step iter w q | iter == 0 = return w
+                      | otherwise = do i <- getRandomR (0, l)
+                                       let ei = lossF w xi
+                                           xi@(xix, xiy) = ps A.! i
+                                           w' = w `pMinus` ((tempo * (lossF' w xi) * xiy) `pMul` xix)
+                                           q' = (1 - smth) * q + smth * ei
+                                       if abs (q - q') > sgdPrec config
+                                          then step (iter - 1) w' q'
+                                          else return w'
+
+sgd' :: Point p => SGDConfig -> [(p, Class)] -> RandMonad (LinClassConfig p)
+sgd' config points = unlift <$> sgd config points'
+  where points' = map (\(x, c) -> (LiftUp x (-1), c)) points
+        unlift (LiftUp w w0) = LinClassConfig w w0

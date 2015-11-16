@@ -3,6 +3,7 @@ import Data.Ord
 import Control.Monad.Random
 import Control.Monad
 import System.Random.Shuffle
+import Common
 import qualified Data.List as L
 
 data TestConfig s c quality = TestConfig { train :: [s] -> RandMonad c
@@ -17,7 +18,6 @@ trySamples tConf p q = do c <- train tConf $! p
 
 --type Splitter s = [s] -> [([s], [s])]
 
-type RandMonad s = Rand StdGen s
 type RandSplitter s = [s] -> RandMonad [([s], [s])]
 
 splitByK k ls = tail $ map fst $ takeWhile pairNotEmpty $ iterate (splitAt k . snd) ([], ls)
