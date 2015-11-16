@@ -57,6 +57,23 @@ instance Point (Double, Double, Double) where
 type Class = Int
 type Point2d d = (d, d)
 type DPoint2d = (Double, Double)
+type DPoint3d = (Double, Double, Double)
+
+data GaussLiftConfig = GaussLiftConfig { glG :: Double -- gaussian param
+                                       , glW :: (Double, Double) -- weights
+                                       , glB :: (Double, Double) -- base vector
+                                       }
+
+gaussLift3d :: GaussLiftConfig -> DPoint2d -> DPoint3d
+gaussLift3d (GaussLiftConfig g (wx, wy) (bx, by)) (px, py) = (px, py, gaussianKernel g $ (s $ px - bx) * wx + (s $ py - by) * wy)
+  where s x = x * x
+
+split :: (a -> Bool) -> [a] -> [[a]]
+split f = reverse . s []
+  where s a [] = a
+        s a l = let (pl, pr) = span (not . f) l
+                    (_, pr') = span f pr
+                in s (pl:a) pr'
 
 chipsReadPoints :: Monad m => String -> m [(DPoint2d, Class)]
 chipsReadPoints = fmap (map fromJust . filter isJust) . sequence . map readP . lines
@@ -119,3 +136,15 @@ collectByClass = HM.toList . foldl f HM.empty
 
 countUnique :: [Class] -> [(Class, Int)]
 countUnique = sumByClass . flip zip (repeat 1)
+
+data LinClassConfig p = LinClassConfig { scW :: p, scW0 :: Double }
+
+instance Show p => Show (LinClassConfig p) where
+  show (LinClassConfig ws w0) = "ws = " ++ (show ws) ++ ", w0 = " ++ (show w0)
+
+linearClassifier :: (Point p) => LinClassConfig p -> p -> Class
+linearClassifier (LinClassConfig w w0) p = sgn $ (dotProduct p w) - w0
+  where sgn x | x < 0 = -1
+              | x > 0 = 1
+              | otherwise = 0
+
