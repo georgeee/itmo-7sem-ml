@@ -183,7 +183,7 @@ sgd config points = step (sgdMaxIter config) pNull initQ
         smth = sgdSmoothness config
         lossF = lF $ sgdLoss config
         lossF' = lF $ sgdLoss' config
-        lF f w (x, y) =  f (dotProduct w x) * y
+        lF f w (x, y) =  f $ (dotProduct w x) * y
         initQ = foldr' ((+) . lossF pNull) 0 ps
         step iter w q | iter == 0 = return w
                       | otherwise = do i <- getRandomR (0, l)

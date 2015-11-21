@@ -21,8 +21,7 @@ import Graphics.EasyPlot
 data Options = Options  { optInput :: IO String
                         , optOutput :: String -> IO ()
                         , optC :: !Double
-                        , optH :: !Double
-                        , optG :: !Double
+                        , optLRTrainConfig :: LRTrainConfig
                         , optK :: !Int
                         , optT :: !Int
                         , optPlot :: Bool
@@ -32,9 +31,8 @@ data Options = Options  { optInput :: IO String
 
 startOptions = Options { optInput = getContents
                        , optOutput = putStr
-                       , optH = 0.1
+                       , optLRTrainConfig = LRTrainConfig { lrPrec = 0.001, lrMaxIter = 10000, lrTempo = 0.001, lrSmoothness = 0.001 }
                        , optC = 0.1
-                       , optG = 0.1
                        , optK = 10
                        , optT = 10
                        , optPlot = False
@@ -48,28 +46,25 @@ options =
     , Option "o" ["output"] (ReqArg outputArgParser "FILE") "Output file"
     , Option "a" ["algo"] (ReqArg algoArgParser "ALGO") "Algo: svm, logistic"
     , Option "c" [] (ReqArg (doubleArgParser $ \v o -> o { optC = v })  "C") $ "svm balance parameter"
-    , Option "h" [] (ReqArg (doubleArgParser $ \v o -> o { optH = v })  "H") $ "stohastic gradient speed"
+    , Option "l" [] (ReqArg lrcArgParser "Linear regression config") $ "stohastic gradient params, in form precision:maxIter:tempo:smoothness"
     , Option "t" [] (ReqArg (intArgParser $ \v o -> o { optT = v })  "T") $ "t param"
     , Option "k" [] (ReqArg (intArgParser $ \v o -> o { optK = v })  "K") $ "k param"
-    , Option "g" [] (ReqArg (doubleArgParser $ \v o -> o { optG = v })  "G") $ "gaussian kernel parameter"
-    , Option "l" [] (ReqArg glcArgParser "Gauss lift config") $ "lift from 2d to 3d, based on gauss lift"
-    --, Option "f" [] (ReqArg sfArgParser  "Similarity Function") $ "similarity (kernel-based) function"
+    , Option "g" [] (ReqArg glcArgParser "Gauss lift config") $ "lift from 2d to 3d, based on gauss lift, in form g:wx:wy:bx:by, wx:wy - ratios for x and y coordinates, bx:by - base point"
     , Option "h" ["help"] (NoArg $ const helpMsgPrinter) "Show help"
     , Option "p" ["plot"] (NoArg $ \opt -> return $ opt { optPlot = True } ) "Draw plot"
     ]
   where
-    glcArgParser arg opt = let (g:wx:wy:bx:by:[]) = map (read :: String -> Double) $ split (\x -> isSpace x || x == ':') arg
-                            in return $ opt { optGLC = Just $ GaussLiftConfig g (wx, wy) (bx, by) }
+    splitter = split (\x -> isSpace x || x == ':')
+    glcArgParser arg opt = let (g:wx:wy:bx:by:[]) = splitter arg
+                            in return $ opt { optGLC = Just $ GaussLiftConfig (read g) (read wx, read wy) (read bx, read by) }
+    lrcArgParser arg opt = let (p:m:t:s:[]) = splitter arg
+                            in return $ opt { optLRTrainConfig = LRTrainConfig { lrPrec = read p, lrMaxIter = read m, lrTempo = read t, lrSmoothness = read s } }
     doubleArgParser f arg = return . f (read arg :: Double)
     intArgParser f arg = return . f (read arg :: Int)
     outputArgParser :: String -> Options -> IO Options
     outputArgParser arg opt = return $ opt { optOutput = writeFile arg }
     inputArgParser :: String -> Options -> IO Options
     inputArgParser arg opt = return $ opt { optInput = readFile arg }
-    --sfArgParser arg opt = case arg of
-    --                        "dot" -> return $ opt { optSF = const dotProduct }
-    --                        "rbf" -> return $ opt { optSF = \o -> rbf $ optG o }
-    --                        s -> fail $ "Unknown similarity function: " ++ s
     algoArgParser arg opt = return $ opt { optAlgo = case arg of
                                             ('s':_) -> SvmAlgo
                                             ('l':_) -> LogRegAlgo
@@ -113,7 +108,7 @@ data Algo = SvmAlgo | LogRegAlgo
 
 testConfig :: Point p => Algo -> Options -> TestConfig (p, Class) (LinClassConfig p) Double
 testConfig SvmAlgo = svmTestConfig . optC
-testConfig LogRegAlgo = logRegTestConfig . optH
+testConfig LogRegAlgo = logRegTestConfig . optLRTrainConfig
 
 main = do
     args <- getArgs
