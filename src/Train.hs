@@ -8,8 +8,6 @@ import qualified Data.List as L
 
 data TestConfig s c quality = TestConfig { train :: [s] -> RandMonad c
                                          , test :: [s] -> c -> quality
-                                         , finalTestCoef :: Double
-                                         , finalTest :: [s] -> c -> quality
                                          }
 
 trySamples :: TestConfig s c quality -> [s] -> [s] -> RandMonad (c, quality)
@@ -36,16 +34,21 @@ listsByDivision = l' []
 tkFoldCv :: Int -> Int -> RandSplitter s
 tkFoldCv t k ds = (sequence $ replicate t (kFoldCV k ds)) >>= return . concat
 
-learn :: Ord quality => TestConfig s c quality -> RandSplitter s -> [s] -> RandMonad (c, quality)
-learn conf splitter ds = do xs <- shuffleM ds
-                            let xs' = take len' xs
-                                xs'' = drop len' xs
-                            if L.null xs' || L.null xs'' then fail ("Wrong testCoef supplied: " ++ (show $ finalTestCoef conf)) else return ()
-                            (c, _) <- learn' xs''
-                            return (c, finalTest conf xs' c)
+learn' :: Ord q => TestConfig s c q -> RandSplitter s -> [s] -> RandMonad c
+learn' conf splitter xs = fst . L.maximumBy (comparing snd) <$> trySplitted xs
+  where trySplitted = splitter >=> sequence . map (uncurry $ trySamples conf)
+
+learn :: Ord q => TestConfig s c q -> RandSplitter s -> Double -> [s] -> RandMonad (c, q)
+learn conf splitter finalTestCoef ds = do
+                  xs <- shuffleM ds
+                  let xs' = take len' xs
+                      xs'' = drop len' xs
+                  when (L.null xs' || L.null xs'') $
+                     fail ("Wrong testCoef supplied: " ++ (show finalTestCoef))
+                  c <- learn' conf splitter xs''
+                  return (c, test conf xs' c)
   where
-    learn' xs = (splitter $! xs) >>= sequence . map (uncurry (trySamples conf)) >>= return . L.maximumBy (comparing snd)
     len = length ds
-    len' = round $ (fromIntegral len) * (finalTestCoef conf)
+    len' = round $ (fromIntegral len) * finalTestCoef
     ds' = take len' ds
     ds'' = drop len' ds

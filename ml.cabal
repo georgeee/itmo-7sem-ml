@@ -22,7 +22,6 @@ executable knn
                        array >= 0.5,
                        MonadRandom >= 0.1.7,
                        random-shuffle == 0.0.4,
-                       easyplot >= 1.0,
                        hashmap >= 1.3
                        -- hs-source-dirs:      
   default-language:    Haskell2010
@@ -40,5 +39,22 @@ executable linearClassifiers
                        repa >= 3.4,
                        easyplot >= 1.0,
                        vector >= 0.10
+                       -- hs-source-dirs:      
+  default-language:    Haskell2010
+executable recSys
+  hs-source-dirs:      src
+  main-is:             RecSysMain.hs
+  -- other-modules:       
+  -- other-extensions:    
+  build-depends:       base >=4.7,
+                       array >= 0.5,
+                       MonadRandom >= 0.1.7,
+                       random-shuffle == 0.0.4,
+                       hmatrix >= 0.17,
+                       cassava >= 0.4,
+                       vector >= 0.10,
+                       bytestring >= 0.10,
+                       deepseq >= 1.4,
+                       unordered-containers >= 0.2.5
                        -- hs-source-dirs:      
   default-language:    Haskell2010

@@ -3,6 +3,8 @@ module Svm where
 
 import Data.Array.Repa (fromListUnboxed, Z(..), (:.)(..))
 import Smo
+import ClassCommon
+import Linear
 import Common
 import Train
 import qualified Data.Vector.Unboxed         as UV
@@ -10,8 +12,6 @@ import qualified Data.Vector.Unboxed         as UV
 svmTestConfig :: Point p => Double -> TestConfig (p, Class) (LinClassConfig p) Double
 svmTestConfig c = TestConfig { train = return . smo c
                              , test = classifierTest linearClassifier fScore
-                             , finalTestCoef = 0.2
-                             , finalTest = classifierTest linearClassifier fScore
                              }
 
 smo :: (Point p) => Double -> [(p, Class)] -> LinClassConfig p

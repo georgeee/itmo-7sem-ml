@@ -5,6 +5,8 @@ import Control.Monad.Random
 import Train
 import Data.Ord
 import Common
+import ClassCommon
+import Linear
 import Data.List
 import qualified Data.Foldable as F
 
@@ -43,7 +45,7 @@ knn1Train ps = (fst $ trainByK knn1' tree, tree)
     tree = buildKdTree ps
 
 knn1TestConfig :: KnnTestConfig Knn1Config -- Trying only k
-knn1TestConfig = TestConfig { train = return . knn1Train, test = classifierTest knn1 fScore, finalTestCoef = 0.2, finalTest = classifierTest knn1 fScore }
+knn1TestConfig = TestConfig { train = return . knn1Train, test = classifierTest knn1 fScore }
 
 data Knn2Config = Knn2Config { knn2K :: !Int
                              , knn2G :: !Double
@@ -77,12 +79,12 @@ knn2Train' !g !ps = (tree `seq` Knn2Config cl g tree, q)
     tree = buildKdTree ps
 
 knn2TestConfig :: Double -> KnnTestConfig Knn2Config
-knn2TestConfig g = TestConfig { train = return . knn2Train g, test = classifierTest knn2 fScore, finalTestCoef = 0.2, finalTest = classifierTest knn2 fScore }
+knn2TestConfig g = TestConfig { train = return . knn2Train g, test = classifierTest knn2 fScore }
 
 knn3Train :: Int -> [(DPoint2d, Class)] -> RandMonad Knn2Config
 knn3Train gc ps = getRandomRs (0, 1) >>= return . fst . minimumBy (comparing snd) . map (flip knn2Train' ps) . take gc
 
 knn3TestConfig :: Int -> KnnTestConfig Knn2Config
-knn3TestConfig gc = TestConfig { train = knn3Train gc, test = classifierTest knn2 fScore, finalTestCoef = 0.2, finalTest = classifierTest knn2 fScore }
+knn3TestConfig gc = TestConfig { train = knn3Train gc, test = classifierTest knn2 fScore }
 
 
