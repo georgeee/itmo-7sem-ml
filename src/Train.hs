@@ -24,11 +24,14 @@ splitByK k ls = tail $ map fst $ takeWhile pairNotEmpty $ iterate (splitAt k . s
 kFoldCV :: Int -> RandSplitter s
 kFoldCV k ds = shuffleM ds >>= return . listsByDivision . splitByK (length ds `div` k)
 
+dummySplitter :: RandSplitter s
+dummySplitter ds = (\x -> [(x, [])]) <$> shuffleM ds
+
 listsByDivision :: [[s]] -> [([s], [s])]
 listsByDivision = l' []
   where
     l' _ [] = []
-    l' acc (a:as) = el `seq` el : l' (acc ++ a) as
+    l' acc (a:as) = el : l' (acc ++ a) as
       where el = (acc ++ (concat as), a)
 
 tkFoldCv :: Int -> Int -> RandSplitter s

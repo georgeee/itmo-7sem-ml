@@ -91,24 +91,18 @@ data LSGDConfig = LSGDConfig { lsgdLoss :: Double -> Double
 
 -- Stohastic gradient descent
 lsgd :: Point p => LSGDConfig -> [(p, Class)] -> RandMonad p
-lsgd config points = step (lsgdMaxIter config) pNull initQ
-  where ps = A.listArray (0, l) $ map (\(x, y) -> (x, fromIntegral y)) points
-        l = length points - 1
-        tempo = lsgdTempo config
+lsgd config points = sgd sgdConf pNull $ map (\(x, y) -> (x, fromIntegral y)) points
+  where tempo = lsgdTempo config
         smth = lsgdSmoothness config
         lossF = lF $ lsgdLoss config
         lossF' = lF $ lsgdLoss' config
         lF f w (x, y) =  f $ (dotProduct w x) * y
-        initQ = foldr' ((+) . lossF pNull) 0 ps
-        step iter w q | iter == 0 = return w
-                      | otherwise = do i <- getRandomR (0, l)
-                                       let ei = lossF w xi
-                                           xi@(xix, xiy) = ps A.! i
-                                           w' = w `pMinus` ((tempo * (lossF' w xi) * xiy) `pMul` xix)
-                                           q' = (1 - smth) * q + smth * ei
-                                       if abs (q - q') > lsgdPrec config
-                                          then step (iter - 1) w' q'
-                                          else return w'
+        sgdConf = SGDConfig { sgdLossF = lossF
+                            , sgdSmoothness = lsgdSmoothness config
+                            , sgdMaxIter = lsgdMaxIter config
+                            , sgdUpdater = \_ xi@(xix, xiy) w -> w `pMinus` ((tempo * (lossF' w xi) * xiy) `pMul` xix)
+                            , sgdPrec = lsgdPrec config
+                            }
 
 lsgd' :: Point p => LSGDConfig -> [(p, Class)] -> RandMonad (LinClassConfig p)
 lsgd' config points = unlift <$> lsgd config points'

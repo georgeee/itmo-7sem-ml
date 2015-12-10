@@ -4,7 +4,6 @@ module Main (main) where
 import Data.Foldable
 import Control.DeepSeq
 import qualified Data.Vector as V
-import Numeric.LinearAlgebra
 import qualified Data.Csv as Csv
 import System.Console.GetOpt
 import Control.Monad
@@ -21,8 +20,8 @@ import Data.Char
 import Control.Monad.Random (evalRandIO)
 import RecSys
 
-type RawUser = String
-type RawItem = String
+type RawUser = Integer
+type RawItem = Integer
 
 data Options = Options  { optInput :: [(User, Item, Rating)]
                         , optInputV :: Maybe ([(User, Item, Rating)])
@@ -31,8 +30,8 @@ data Options = Options  { optInput :: [(User, Item, Rating)]
                         , optC :: !Double
                         , optK :: !Int
                         , optT :: !Int
-                        , optPlot :: Bool
                         , optAlgo :: Algo
+                        , optVerbose :: Bool
                         , optUMap :: HM.HashMap RawUser User
                         , optIMap :: HM.HashMap RawItem Item
                         , optSvdConfig :: SvdTrainConfig
@@ -45,8 +44,8 @@ startOptions = Options { optInput = undefined
                        , optC = 0.1
                        , optK = 10
                        , optT = 10
-                       , optPlot = False
                        , optAlgo = undefined
+                       , optVerbose = False
                        , optUMap = HM.empty
                        , optIMap = HM.empty
                        , optSvdConfig = SvdTrainConfig { svdMaxIter = 100000
@@ -57,6 +56,8 @@ startOptions = Options { optInput = undefined
                                                        , svdSmoothness = 0.01
                                                        , svdTempo = 10
                                                        , svdPrec = 0.01
+                                                       , svdRateBase = 1
+                                                       , svdL5 = 10
                                                        }
                        }
 
@@ -78,21 +79,23 @@ options =
     , Option "u" ["test"] (ReqArg testArgParser "FILE") "Test input file"
     , Option "a" ["algo"] (ReqArg algoArgParser "ALGO") "Algo: svd1, svd2"
     --, Option "c" [] (ReqArg (doubleArgParser $ \v o -> o { optC = v })  "C") $ "svm balance parameter"
-    , Option "s" [] (ReqArg svdArgParser "Svd config") $ "svd params, in form maxIter:dim:l4:smoothness:tempo:prec"
+    , Option "s" [] (ReqArg svdArgParser "Svd config") $ "svd params, in form maxIter:dim:l4:smoothness:tempo:prec:base:l5"
     , Option "t" [] (ReqArg (intArgParser $ \v o -> o { optT = v })  "T") $ "t param"
     , Option "k" [] (ReqArg (intArgParser $ \v o -> o { optK = v })  "K") $ "k param"
     , Option "h" ["help"] (NoArg $ const helpMsgPrinter) "Show help"
-    , Option "p" ["plot"] (NoArg $ \opt -> return $ opt { optPlot = True } ) "Draw plot"
+    , Option "" ["verbose"] (NoArg $ (\os -> return os {optVerbose = True })) ""
     ]
   where
     splitter = split (\x -> isSpace x || x == ':')
-    svdArgParser arg opts = let (m:d:l4:s:t:p:[]) = splitter arg
+    svdArgParser arg opts = let (m:d:l4:s:t:p:b:l5:[]) = splitter arg
                                 s' = (optSvdConfig opts) { svdMaxIter = read m
                                                        , svdDim = read d
                                                        , svdL4 = read l4
                                                        , svdSmoothness = read s
                                                        , svdTempo = read t
                                                        , svdPrec = read p
+                                                       , svdRateBase = read b
+                                                       , svdL5 = read l5
                                                        }
                              in return $ opts { optSvdConfig = s' }
     doubleArgParser f arg = return . f (read arg :: Double)
@@ -103,6 +106,8 @@ options =
     algoArgParser arg opt = return $ opt { optAlgo = case arg of
                                             "svd1" -> Svd1Algo
                                             "svd2" -> Svd2Algo
+                                            "svdPP" -> SvdPPAlgo
+                                            "svdPP2" -> SvdPP2Algo
                                             _ -> error $ "Unknown algo: " ++ arg
                                          }
     helpMsgPrinter = do
@@ -117,7 +122,7 @@ inputParser arg opts lens replacer = BSL.readFile arg >>= readCsv
                                                      s' = (optSvdConfig opts) { svdIMax = HM.size im'
                                                                               , svdUMax = HM.size um'
                                                                               }
-                                                  in return $
+                                                  in s' `seq` return $
                                                     lens (opts { optUMap = um'
                                                                , optIMap = im'
                                                                , optSvdConfig = s'
@@ -141,24 +146,45 @@ readCsv :: (Csv.FromRecord a, Monad m) => BSL.ByteString -> m [a]
 readCsv = either fail (return . V.toList) . Csv.decode Csv.HasHeader
 
 runAlgo :: Algo -> Options -> IO ()
-runAlgo algo opts = do --optOutput opts $ show $ optInput opts
-                       (c, q) <- case optInputV opts of
-                         Just vInput -> do c <- evalRandIO $ learn' conf splitter $ optInput opts
-                                           return (c, test conf vInput c)
-                         Nothing -> evalRandIO $ learn conf splitter 0.2 $ optInput opts
-                       optOutput opts $ (++ "\n") $ show $ q
-                       case optTest opts of
-                         Just (tInput, tOutput) -> tOutput $ test' c $ tInput
-                         Nothing -> return ()
-     where conf = testConfig algo opts
-           splitter = tkFoldCv (optT opts) (optK opts)
-           test' c = map (\(id, u, i) -> (id, rate c u i))
+runAlgo Svd1Algo opts = runAlgo' AlgoConfig { testConfig = svdTestConfig $ optSvdConfig opts
+                                            , rate = svd
+                                            , splitter = dummySplitter
+                                            } opts
+runAlgo Svd2Algo opts = runAlgo' AlgoConfig { testConfig = svdTestConfig $ optSvdConfig opts
+                                            , rate = svd
+                                            , splitter = tkFoldCv (optT opts) (optK opts)
+                                            } opts
+runAlgo SvdPPAlgo opts = runAlgo' AlgoConfig { testConfig = svdPPTestConfig $ optSvdConfig opts
+                                             , rate = svdPP
+                                             , splitter = dummySplitter
+                                             } opts
+runAlgo SvdPP2Algo opts = runAlgo' AlgoConfig { testConfig = svdPPTestConfig $ optSvdConfig opts
+                                             , rate = svdPP
+                                             , splitter = tkFoldCv (optT opts) (optK opts)
+                                             } opts
 
-data Algo = Svd1Algo | Svd2Algo
+runAlgo' :: Show c => AlgoConfig c -> Options -> IO ()
+runAlgo' algo opts = do (c, q) <- case optInputV opts of
+                         Just vInput -> do c <- evalRandIO $ learn' conf splitter' $ optInput opts
+                                           return (c, test conf vInput c)
+                         Nothing -> evalRandIO $ learn conf (splitter algo) 0.2 $ optInput opts
+                        optOutput opts $ (++ "\n") $ show $ q
+                        when (optVerbose opts) $
+                           optOutput opts $ (++ "\n") $ show $ (c, q)
+                        case optTest opts of
+                          Just (tInput, tOutput) -> tOutput $ test' c $ tInput
+                          Nothing -> return ()
+     where conf = testConfig algo
+           test' c = map (\(id, u, i) -> (id, rate algo c u i))
+           splitter' = splitter algo
+
+data Algo = Svd1Algo | Svd2Algo | SvdPPAlgo | SvdPP2Algo
   deriving Show
 
-testConfig :: Algo -> Options -> TestConfig (User, Item, Rating) RecConfig Double
-testConfig Svd1Algo opts = svdTestConfig $ optSvdConfig opts
+data AlgoConfig c = AlgoConfig { testConfig :: TestConfig (User, Item, Rating) c Double
+                               , splitter :: RandSplitter (User, Item, Rating)
+                               , rate :: c -> User -> Item -> Rating
+                               }
 
 main = do
     args <- getArgs
