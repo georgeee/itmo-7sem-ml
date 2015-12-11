@@ -137,7 +137,7 @@ computeRelated us = V.map HS.toList . foldr' f (V.replicate us HS.empty)
 
 svdPPTrain :: SvdTrainConfig -> [(User, Item, Rating)] -> RandMonad SvdPPConfig
 svdPPTrain config rates = do initConf <- getRandConf config <$> getRandomRs (0, 1)
-                             initRiWeights <- fst . takeVectors (svdDim config) (svdIMax config) <$> return (repeat 0)
+                             initRiWeights <- fst . takeVectors (svdDim config) (svdIMax config) <$> getRandomRs (0, 0.0001)
                              let initPPConf = SvdPPConfig { rppConfig = initConf
                                                           , rppRelated = computeRelated (svdUMax config) rates
                                                           , rppRItemWeights = V.fromList initRiWeights
