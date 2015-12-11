@@ -56,6 +56,6 @@ sgd' sgdConf initConf points = step initConf initQ . take maxIter
                   xi = ps A.! index
                   c' = updater e xi c
                   q' = (1 - smth) * q + smth * e
-               in if abs (q - q') > prec
+               in if prec == 0 || abs (q - q') > prec
                    then step c' q' irest
                    else c'
