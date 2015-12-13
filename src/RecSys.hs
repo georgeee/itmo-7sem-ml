@@ -1,22 +1,30 @@
-{-# LANGUAGE PackageImports #-}
-module RecSys( SvdPPConfig(..), SvdConfig(..), svd, svd', svdPP, svdPP'
+{-# LANGUAGE BangPatterns, PackageImports #-}
+module RecSys( SvdPPConfig(..), SvdConfig(..), svd', svdPP'
              , rmse, svdTestConfig, SvdTrainConfig(..), svdPPTestConfig, User, Item, Rating ) where
+import Control.Applicative
+import Data.Random.Source.PureMT
+import Data.Word
+import Data.Functor.Identity
+import qualified Data.Random.Lift as RL
 import Data.List
 import Data.Foldable
+import qualified Data.Array as A
+import Data.STRef
+import Control.Monad.ST
 import Train
 import Data.Maybe
 import Control.DeepSeq
 import Control.Monad
 import Common
 import qualified "unordered-containers" Data.HashSet as HS
-import Control.Monad.Random
 import qualified Numeric.LinearAlgebra as L
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
+import Data.Random
 
 type User = Int
 type Item = Int
-type Rating = Int
+type Rating = Double
 
 data SvdConfig = SvdConfig { base :: !Double
                            , uBases :: !(V.Vector Double)
@@ -32,12 +40,6 @@ data SvdPPConfig = SvdPPConfig { rppConfig :: !SvdConfig
                                }
                            deriving Show
 
-svd :: SvdConfig -> User -> Item -> Rating
-svd rc u i = round $ svd' rc u i
-
-svdPP :: SvdPPConfig -> User -> Item -> Rating
-svdPP rc u i = round $ svdPP' rc u i
-
 svdPP' :: SvdPPConfig -> User -> Item -> Double
 svdPP' rc u i = (base c) + c `uB` u + c `iB` i + (pu L.<.> c `iV` i)
   where pu = case related of
@@ -51,13 +53,13 @@ svdPP' rc u i = (base c) + c `uB` u + c `iB` i + (pu L.<.> c `iV` i)
 svd' :: SvdConfig -> User -> Item -> Double
 svd' c u i = (base c) + c `uB` u + c `iB` i + (c `uV` u L.<.> c `iV` i)
 
-c `uB` u = uBases c V.! u
+uB SvdConfig { uBases = !v } = (v V.!)
 infixl 9 `uB`
-c `iB` i = iBases c V.! i
+iB SvdConfig { iBases = !v } = (v V.!)
 infixl 9 `iB`
-c `uV` u = uVects c V.! u
+uV SvdConfig { uVects = !v } = (v V.!)
 infixl 9 `uV`
-c `iV` i = iVects c V.! i
+iV SvdConfig { iVects = !v } = (v V.!)
 infixl 9 `iV`
 
 data SvdTrainConfig = SvdTrainConfig { svdMaxIter :: !Int
@@ -72,42 +74,58 @@ data SvdTrainConfig = SvdTrainConfig { svdMaxIter :: !Int
                                      , svdL5 :: !Double
                                      }
 
-svdPPTestConfig :: SvdTrainConfig -> TestConfig (User, Item, Rating) SvdPPConfig Double
-svdPPTestConfig c = TestConfig { train = svdPPTrain c
-                               , test = rateTest svdPP rmse
+type SVDTestConfigGetter c = SvdTrainConfig -> SGDMethod (User, Item, Rating) c -> TestConfig (User, Item, Rating) c Double
+
+svdPPTestConfig :: SVDTestConfigGetter SvdPPConfig
+svdPPTestConfig c sgdM = TestConfig { train = svdPPTrain sgdM c
+                               , test = rateTest svdPP' rmse
                                }
 
-svdTestConfig :: SvdTrainConfig -> TestConfig (User, Item, Rating) SvdConfig Double
-svdTestConfig c = TestConfig { train = svdTrain c
-                             , test = rateTest svd rmse
-                             }
-
-rateTest rater score ss c = score $ map (\(u, i, r) -> (fromIntegral r, fromIntegral $ rater c u i)) ss
+rateTest rater score ss c = score $ map (\(u, i, r) -> (r, rater c u i)) ss
 
 rmse :: [(Double, Double)] -> Double
 rmse ds = negate $ (** 0.5) $ (sum $ map (\(a, b) -> (a - b)^2) ds) / (fromIntegral $ length ds)
 
-getRandConf config rs = SvdConfig { base = svdRateBase config
-                        , uBases = V.fromList uB
-                        , iBases = V.fromList iB
-                        , uVects = V.fromList uV
-                        , iVects = V.fromList iV
-                        }
-  where (uB, rest1) = splitAt us rs
-        (iB, rest2) = splitAt is rest1
-        (uV, rest3) = takeVectors dim us rest2
-        (iV, rest4) = takeVectors dim is rest3
+rateBase config ps = if svdRateBase config < 0
+                        then (foldr' (\(_, _, r) -> (+) $ r) 0 ps) / (fromIntegral . length $ ps)
+                        else svdRateBase config
+
+getRandConf :: Double -> SvdTrainConfig -> RVar SvdConfig
+getRandConf base config = SvdConfig base <$> (rV us) <*> (rV is) <*> (rV' us) <*> (rV' is)
+  where rV = fmap V.fromList . flip replicateM (pure 0)
+        rV' = fmap V.fromList . takeVectors dim (normal 0 (1 / (fromIntegral dim)))
         dim = svdDim config
         us = svdUMax config
         is = svdIMax config
 
-takeVectors dim n rest = head $ drop n $ iterate f ([], rest)
-  where f (bs, rest) = let (v, r) = splitAt dim rest
-                        in (L.vector v : bs, r)
+takeVectors :: Int -> (RVar Double) -> Int -> RVar [L.Vector Double]
+takeVectors dim r n = replicateM n $ L.vector <$> replicateM dim r
 
-svdTrain :: SvdTrainConfig -> [(User, Item, Rating)] -> RandMonad SvdConfig
-svdTrain config rates = do initConf <- getRandConf config <$> getRandomRs (0, 1)
-                           sgd sgdConf initConf $ map (\(u, i, r) -> (u, i, fromIntegral r)) rates
+--(!) :: MV.STVector s a -> Int -> ST s a
+--(!) = MV.read
+--infixl 9 !
+--
+--(~+) :: (Applicative f, Num a) => f a -> f a -> f a
+--(~+) = liftA2 (+)
+--infixl 6 ~+
+--(~-) :: (Applicative f, Num a) => f a -> f a -> f a
+--(~-) = liftA2 (-)
+--infixl 6 ~-
+--(~.) :: (Applicative f, L.Numeric a) => f (L.Vector a) -> f (L.Vector a) -> f a
+--(~.) = liftA2 (L.<.>)
+--infixr 8 ~.
+--(~*) :: (Applicative f, Num a) => f a -> f a -> f a
+--(~*) = liftA2 (*)
+--infixl 7 ~*
+
+svdTestConfig :: SVDTestConfigGetter SvdConfig
+svdTestConfig c sgdM = TestConfig { train = svdTrain sgdM c
+                             , test = rateTest svd' rmse
+                             }
+
+svdTrain :: SGDMethod (User, Item, Rating) SvdConfig -> SvdTrainConfig -> [(User, Item, Rating)] -> RVar SvdConfig
+svdTrain sgdM config rates = do initConf <- getRandConf (rateBase config rates) config
+                                sgdM sgdConf initConf rates
   where sgdConf = SGDConfig { sgdLossF = lossF
                             , sgdSmoothness = svdSmoothness config
                             , sgdMaxIter = svdMaxIter config
@@ -118,7 +136,7 @@ svdTrain config rates = do initConf <- getRandConf config <$> getRandomRs (0, 1)
         l4' = L.scalar $ l4
         tempo = svdTempo config
         tempo' = L.scalar $ tempo
-        lossF c (u, i, r) = (svd' c u i) - (fromIntegral r)
+        lossF c (u, i, r) = r - (svd' c u i)
         updater e (u, i, r) c = bu' `seq` bi' `seq` vu' `seq` vi' `seq`
                                  c { uBases = V.modify (\v -> MV.write v u bu') $ uBases c
                                    , iBases = V.modify (\v -> MV.write v i bi') $ iBases c
@@ -131,18 +149,63 @@ svdTrain config rates = do initConf <- getRandConf config <$> getRandomRs (0, 1)
                vi' = c `iV` i + tempo' * (e' * c `uV` u - l4' * c `iV` i)
                vu' = c `uV` u + tempo' * (e' * c `iV` i - l4' * c `uV` u)
 
+-- svdTrain :: SvdTrainConfig -> [(User, Item, Rating)] -> RVar SvdConfig
+-- svdTrain config rates = do initConf <- getRandConf (rateBase config rates) config
+--                            newSeed <- uniform (-2^61) (2^61)
+--                            return $ run' newSeed initConf
+--   where !ps = A.listArray (0, l) rates
+--         l = length rates - 1
+--         smth = svdSmoothness config
+--         maxIter = svdMaxIter config
+--         prec = svdPrec config
+--         l4 = svdL4 config
+--         !l4' = pure $ L.scalar l4 :: ST s (L.Vector Double)
+--         tempo = svdTempo config
+--         !tempo' = L.scalar $ tempo :: L.Vector Double
+--         run :: SvdConfig -> Int -> SvdConfig
+--         run initConf index = runST $ do
+--           let lossF (!u, !i, !r) = pure r ~- ((pure $ base initConf) ~+ uBs ! u ~+ iBs ! i ~+ (uVs ! u ~. iVs ! i))
+--               initQ = foldM (\b a -> (+b) <$> lossF a) 0 rates
+--           q <- lift $ initQ >>= newSTRef
+--           let step conf oldQ index = do
+--                 let xi@(u, i, r) <- (A.!) ps index
+--                     e <- lift $ lossF xi
+--                 uBs <- V.unsafeThaw $ uBases initConf
+--                 iBs <- V.unsafeThaw $ iBases initConf
+--                 uVs <- V.unsafeThaw $ uVects initConf
+--                 iVs <- V.unsafeThaw $ iVects initConf
+--                 let e' = L.scalar e :: L.Vector Double
+--                     ub = uBs ! u
+--                     ib = iBs ! i
+--                     uv = uVs ! u
+--                     iv = iVs ! i
+--                 MV.write uBs u $! ub + tempo * (e - l4 * ub)
+--                 MV.write iBs i $! ib + tempo * (e - l4 * ib)
+--                 MV.write uVs u $! uv + tempo' * (e' * iv - l4' * uv)
+--                 MV.write iVs i $! iv + tempo' * (e' * uv - l4' * iv)
+--                 let newQ = (1 - smth) * oldQ + smth * e
+--                 (,) newQ . SvdConfig (base initConf)
+--                                     <$> (V.unsafeFreeze uBs)
+--                                     <*> (V.unsafeFreeze iBs)
+--                                     <*> (V.unsafeFreeze uVs)
+--                                     <*> (V.unsafeFreeze iVs)
+--                 when ((prec == 0 || abs (newQ - oldQ) > prec) && iter > 0) step
+--           step
+
+
+
 computeRelated us = V.map HS.toList . foldr' f (V.replicate us HS.empty)
   where f (u, i, _) = V.modify (\v -> MV.read v u >>= MV.write v u . HS.insert i)
 
 
-svdPPTrain :: SvdTrainConfig -> [(User, Item, Rating)] -> RandMonad SvdPPConfig
-svdPPTrain config rates = do initConf <- getRandConf config <$> getRandomRs (0, 1)
-                             initRiWeights <- fst . takeVectors (svdDim config) (svdIMax config) <$> getRandomRs (0, 0.0001)
-                             let initPPConf = SvdPPConfig { rppConfig = initConf
-                                                          , rppRelated = computeRelated (svdUMax config) rates
-                                                          , rppRItemWeights = V.fromList initRiWeights
-                                                          }
-                             sgd sgdConf initPPConf $ map (\(u, i, r) -> (u, i, fromIntegral r)) rates
+svdPPTrain :: SGDMethod (User, Item, Rating) SvdPPConfig -> SvdTrainConfig -> [(User, Item, Rating)] -> RVar SvdPPConfig
+svdPPTrain sgdM config rates = do initConf <- getRandConf (rateBase config rates) config
+                                  initRiWeights <- takeVectors dim (normal 0 (1 / (fromIntegral dim))) (svdIMax config)
+                                  let initPPConf = SvdPPConfig { rppConfig = initConf
+                                                               , rppRelated = computeRelated (svdUMax config) rates
+                                                               , rppRItemWeights = V.fromList initRiWeights
+                                                               }
+                                  sgdM sgdConf initPPConf rates
   where sgdConf = SGDConfig { sgdLossF = lossF
                             , sgdSmoothness = svdSmoothness config
                             , sgdMaxIter = svdMaxIter config
@@ -152,10 +215,11 @@ svdPPTrain config rates = do initConf <- getRandConf config <$> getRandomRs (0, 
         l4 = svdL4 config
         l5 = svdL5 config
         l5' = L.scalar $ l5
+        dim = svdDim config
         tempo = svdTempo config
         tempo' = L.scalar $ tempo
-        lossF rc (u, i, r) = (svdPP' rc u i) - (fromIntegral r)
-        updater e (u, i, r) rc = rc { rppConfig = c'
+        lossF rc (u, i, r) = r - (svdPP' rc u i)
+        updater e (u, i, r) rc = ws' `seq` c' `seq` rc { rppConfig = c'
                                     , rppRItemWeights = ws'
                                     }
          where e' = L.scalar e
@@ -172,11 +236,11 @@ svdPPTrain config rates = do initConf <- getRandConf config <$> getRandomRs (0, 
                 where modifier v = forM_ related $ f v
                       f v j = do yj <- MV.read v j
                                  MV.write v j $ yj + tempo' * (e' * rsize' * c `iV` i - l5' * yj)
-               rsize' = L.scalar $ (fromIntegral $ length related) ** (-0.5)
+               rsize' = L.scalar $! (fromIntegral $! length related) ** (-0.5)
                c = rppConfig rc
                c' = bu' `seq` bi' `seq` vu' `seq` vi' `seq`
-                        c { uBases = V.modify (\v -> MV.write v u bu') $ uBases c
-                          , iBases = V.modify (\v -> MV.write v i bi') $ iBases c
-                          , uVects = V.modify (\v -> MV.write v u vu') $ uVects c
-                          , iVects = V.modify (\v -> MV.write v i vi') $ iVects c
+                        c { uBases = V.modify (\v -> MV.write v u bu') $! uBases c
+                          , iBases = V.modify (\v -> MV.write v i bi') $! iBases c
+                          , uVects = V.modify (\v -> MV.write v u vu') $! uVects c
+                          , iVects = V.modify (\v -> MV.write v i vi') $! iVects c
                           }

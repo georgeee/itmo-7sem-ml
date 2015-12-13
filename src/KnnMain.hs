@@ -15,7 +15,7 @@ import Knn
 import ClassCommon
 import Linear
 import Common
-import Control.Monad.Random
+import Data.Random
 
 
 data Options = Options  { optAlgo :: Options -> IO ()
@@ -46,8 +46,8 @@ algos = HM.fromList [ ("knn1", knn1Algo)
                     ]
 
 knnAlgo :: Show conf' => KnnTestConfig conf -> ((conf, Double) -> conf') -> Options -> IO ()
-knnAlgo testConfig printHelper opts = generalAlgo chipsReadPoints (evalRandIO . algo) opts
-  where algo = learn testConfig (tkFoldCv (optT opts) (optK opts)) 0.2 >=> return . printHelper
+knnAlgo testConfig printHelper opts = generalAlgo chipsReadPoints algo opts
+  where algo = defaultSample Nothing . learn testConfig (tkFoldCv (optT opts) (optK opts)) 0.2 >=> return . printHelper
 
 knn1Algo = knnAlgo knn1TestConfig forPrint
   where

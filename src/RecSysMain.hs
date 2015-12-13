@@ -1,6 +1,7 @@
 {-# LANGUAGE PackageImports, RankNTypes, TypeSynonymInstances, FlexibleInstances #-}
 module Main (main) where
 
+import Data.Word (Word64)
 import Data.Foldable
 import Control.DeepSeq
 import qualified Data.Vector as V
@@ -17,7 +18,7 @@ import qualified Data.ByteString.Lazy as BSL
 import System.Environment
 import Common
 import Data.Char
-import Control.Monad.Random (evalRandIO)
+import Data.Random
 import RecSys
 
 type RawUser = Integer
@@ -25,9 +26,8 @@ type RawItem = Integer
 
 data Options = Options  { optInput :: [(User, Item, Rating)]
                         , optInputV :: Maybe ([(User, Item, Rating)])
-                        , optTest :: Maybe ([(Int, User, Item)], [(Int, Rating)] -> IO ())
+                        , optTest :: Maybe ([(Int, User, Item)], [(Int, Double)] -> IO ())
                         , optOutput :: String -> IO ()
-                        , optC :: !Double
                         , optK :: !Int
                         , optT :: !Int
                         , optAlgo :: Algo
@@ -35,19 +35,22 @@ data Options = Options  { optInput :: [(User, Item, Rating)]
                         , optUMap :: HM.HashMap RawUser User
                         , optIMap :: HM.HashMap RawItem Item
                         , optSvdConfig :: SvdTrainConfig
+                        , optFSGDCoef :: Double
+                        , optSeed :: Maybe Word64
                         }
 
 startOptions = Options { optInput = undefined
                        , optInputV = Nothing
                        , optTest = Nothing
                        , optOutput = putStr
-                       , optC = 0.1
                        , optK = 10
                        , optT = 10
                        , optAlgo = undefined
                        , optVerbose = False
                        , optUMap = HM.empty
                        , optIMap = HM.empty
+                       , optFSGDCoef = 0
+                       , optSeed = Nothing
                        , optSvdConfig = SvdTrainConfig { svdMaxIter = 100000
                                                        , svdDim = 4
                                                        , svdIMax = 0
@@ -56,21 +59,10 @@ startOptions = Options { optInput = undefined
                                                        , svdSmoothness = 0.01
                                                        , svdTempo = 10
                                                        , svdPrec = 0.01
-                                                       , svdRateBase = 1
+                                                       , svdRateBase = 0
                                                        , svdL5 = 10
                                                        }
                        }
-
-
---data SvdTrainConfig = SvdTrainConfig { svdMaxIter :: Int
---                                     , svdDim :: Int
---                                     , svdIMax :: Int
---                                     , svdUMax :: Int
---                                     , svdL4 :: Double
---                                     , svdSmoothness :: Double
---                                     , svdTempo :: Double
---                                     , svdPrec :: Double
---                                     }
 
 options :: [ OptDescr (Options -> IO Options) ]
 options =
@@ -78,10 +70,11 @@ options =
     , Option "v" ["validation"] (ReqArg inputVArgParser "FILE") "Validation input file (optional)"
     , Option "u" ["test"] (ReqArg testArgParser "FILE") "Test input file"
     , Option "a" ["algo"] (ReqArg algoArgParser "ALGO") "Algo: svd1, svd2"
-    --, Option "c" [] (ReqArg (doubleArgParser $ \v o -> o { optC = v })  "C") $ "svm balance parameter"
     , Option "s" [] (ReqArg svdArgParser "Svd config") $ "svd params, in form maxIter:dim:l4:smoothness:tempo:prec:base:l5"
     , Option "t" [] (ReqArg (intArgParser $ \v o -> o { optT = v })  "T") $ "t param"
     , Option "k" [] (ReqArg (intArgParser $ \v o -> o { optK = v })  "K") $ "k param"
+    , Option "r" [] (ReqArg (\arg os -> return os { optSeed = Just $ read arg })  "SEED") $ "random seed"
+    , Option "f" [] (ReqArg (doubleArgParser $ \v o -> o { optFSGDCoef = v })  "Coef") $ "FSGD coef"
     , Option "h" ["help"] (NoArg $ const helpMsgPrinter) "Show help"
     , Option "" ["verbose"] (NoArg $ (\os -> return os {optVerbose = True })) ""
     ]
@@ -104,10 +97,8 @@ options =
     testArgParser arg opts = inputParser arg opts (\opts bs -> opts { optTest = Just (bs, BSL.writeFile (arg ++ ".out") . Csv.encode) }) replaceIds'
     inputVArgParser arg opts = inputParser arg opts (\opts bs -> opts { optInputV = Just bs }) replaceIds
     algoArgParser arg opt = return $ opt { optAlgo = case arg of
-                                            "svd1" -> Svd1Algo
-                                            "svd2" -> Svd2Algo
+                                            "svd" -> SvdAlgo
                                             "svdPP" -> SvdPPAlgo
-                                            "svdPP2" -> SvdPP2Algo
                                             _ -> error $ "Unknown algo: " ++ arg
                                          }
     helpMsgPrinter = do
@@ -146,44 +137,38 @@ readCsv :: (Csv.FromRecord a, Monad m) => BSL.ByteString -> m [a]
 readCsv = either fail (return . V.toList) . Csv.decode Csv.HasHeader
 
 runAlgo :: Algo -> Options -> IO ()
-runAlgo Svd1Algo opts = runAlgo' AlgoConfig { testConfig = svdTestConfig $ optSvdConfig opts
-                                            , rate = svd
+runAlgo SvdAlgo opts = runAlgo' AlgoConfig { testConfig = svdTestConfig $ optSvdConfig opts
+                                            , rate = svd'
                                             , splitter = dummySplitter
                                             } opts
-runAlgo Svd2Algo opts = runAlgo' AlgoConfig { testConfig = svdTestConfig $ optSvdConfig opts
-                                            , rate = svd
-                                            , splitter = tkFoldCv (optT opts) (optK opts)
-                                            } opts
 runAlgo SvdPPAlgo opts = runAlgo' AlgoConfig { testConfig = svdPPTestConfig $ optSvdConfig opts
-                                             , rate = svdPP
+                                             , rate = svdPP'
                                              , splitter = dummySplitter
-                                             } opts
-runAlgo SvdPP2Algo opts = runAlgo' AlgoConfig { testConfig = svdPPTestConfig $ optSvdConfig opts
-                                             , rate = svdPP
-                                             , splitter = tkFoldCv (optT opts) (optK opts)
                                              } opts
 
 runAlgo' :: Show c => AlgoConfig c -> Options -> IO ()
 runAlgo' algo opts = do (c, q) <- case optInputV opts of
-                         Just vInput -> do c <- evalRandIO $ learn' conf splitter' $ optInput opts
+                         Just vInput -> do c <- defaultSample (optSeed opts) . learn' conf splitter' $ optInput opts
                                            return (c, test conf vInput c)
-                         Nothing -> evalRandIO $ learn conf (splitter algo) 0.2 $ optInput opts
+                         Nothing -> defaultSample (optSeed opts) . learn conf (splitter algo) 0.1 $ optInput opts
                         optOutput opts $ (++ "\n") $ show $ q
                         when (optVerbose opts) $
                            optOutput opts $ (++ "\n") $ show $ (c, q)
                         case optTest opts of
                           Just (tInput, tOutput) -> tOutput $ test' c $ tInput
                           Nothing -> return ()
-     where conf = testConfig algo
+     where conf = testConfig algo $ case optFSGDCoef opts of
+                                      0 -> sgd
+                                      coef -> fsgd coef
            test' c = map (\(id, u, i) -> (id, rate algo c u i))
            splitter' = splitter algo
 
-data Algo = Svd1Algo | Svd2Algo | SvdPPAlgo | SvdPP2Algo
+data Algo = SvdAlgo | SvdPPAlgo
   deriving Show
 
-data AlgoConfig c = AlgoConfig { testConfig :: TestConfig (User, Item, Rating) c Double
+data AlgoConfig c = AlgoConfig { testConfig :: SGDMethod (User, Item, Rating) c -> TestConfig (User, Item, Rating) c Double
                                , splitter :: RandSplitter (User, Item, Rating)
-                               , rate :: c -> User -> Item -> Rating
+                               , rate :: c -> User -> Item -> Double
                                }
 
 main = do

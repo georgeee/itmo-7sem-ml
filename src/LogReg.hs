@@ -3,6 +3,7 @@ import Train
 import ClassCommon
 import Linear
 import Common
+import Data.Random
 import qualified Data.Array as A
 
 data LRTrainConfig = LRTrainConfig { lrPrec :: !Double
@@ -17,7 +18,7 @@ logRegTestConfig c = TestConfig { train = lrTrain c
                                 }
 
 
-lrTrain :: (Point p) => LRTrainConfig -> [(p, Class)] -> RandMonad (LinClassConfig p)
+lrTrain :: (Point p) => LRTrainConfig -> [(p, Class)] -> RVar (LinClassConfig p)
 lrTrain c = lsgd' lsgdConfig
   where lossF x = log $ 1 + exp ( negate x )
         lossF' x = negate $ recip $ 1 + exp x

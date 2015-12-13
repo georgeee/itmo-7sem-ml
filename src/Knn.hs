@@ -1,7 +1,7 @@
 {-# LANGUAGE PackageImports, TypeSynonymInstances, FlexibleInstances, BangPatterns #-}
 module Knn where
 import qualified Data.KdMap.Static as Kd
-import Control.Monad.Random
+import Data.Random
 import Train
 import Data.Ord
 import Common
@@ -81,8 +81,8 @@ knn2Train' !g !ps = (tree `seq` Knn2Config cl g tree, q)
 knn2TestConfig :: Double -> KnnTestConfig Knn2Config
 knn2TestConfig g = TestConfig { train = return . knn2Train g, test = classifierTest knn2 fScore }
 
-knn3Train :: Int -> [(DPoint2d, Class)] -> RandMonad Knn2Config
-knn3Train gc ps = getRandomRs (0, 1) >>= return . fst . minimumBy (comparing snd) . map (flip knn2Train' ps) . take gc
+knn3Train :: Int -> [(DPoint2d, Class)] -> RVar Knn2Config
+knn3Train gc ps = getRandomRs 0 1 gc >>= return . fst . minimumBy (comparing snd) . map (flip knn2Train' ps)
 
 knn3TestConfig :: Int -> KnnTestConfig Knn2Config
 knn3TestConfig gc = TestConfig { train = knn3Train gc, test = classifierTest knn2 fScore }

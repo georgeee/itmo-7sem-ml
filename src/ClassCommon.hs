@@ -7,7 +7,7 @@ import Data.Maybe
 import qualified "hashmap" Data.HashSet as HS
 import qualified "hashmap" Data.HashMap as HM
 import qualified Data.Array as A
-import Control.Monad.Random
+import Data.Random
 import Linear
 import Common
 
@@ -90,7 +90,7 @@ data LSGDConfig = LSGDConfig { lsgdLoss :: Double -> Double
                              }
 
 -- Stohastic gradient descent
-lsgd :: Point p => LSGDConfig -> [(p, Class)] -> RandMonad p
+lsgd :: Point p => LSGDConfig -> [(p, Class)] -> RVar p
 lsgd config points = sgd sgdConf pNull $ map (\(x, y) -> (x, fromIntegral y)) points
   where tempo = lsgdTempo config
         smth = lsgdSmoothness config
@@ -104,7 +104,7 @@ lsgd config points = sgd sgdConf pNull $ map (\(x, y) -> (x, fromIntegral y)) po
                             , sgdPrec = lsgdPrec config
                             }
 
-lsgd' :: Point p => LSGDConfig -> [(p, Class)] -> RandMonad (LinClassConfig p)
+lsgd' :: Point p => LSGDConfig -> [(p, Class)] -> RVar (LinClassConfig p)
 lsgd' config points = unlift <$> lsgd config points'
   where points' = map (\(x, c) -> (LiftUp x (-1), c)) points
         unlift (LiftUp w w0) = LinClassConfig w w0

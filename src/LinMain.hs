@@ -16,7 +16,6 @@ import Common
 import ClassCommon
 import Linear
 import Data.Char
-import Control.Monad.Random (evalRandIO)
 import Graphics.EasyPlot
 
 
@@ -103,7 +102,7 @@ subAlgo algo opts ps = (subAlgo' $! ps)
                   >>= \(c, q) -> ((optOutput opts $ (++ "\n") $ show $ (c, q))
                   >> when (optPlot opts) (plotPoints ps c >> return ()))
   where
-    subAlgo' = evalRandIO . learn (testConfig algo opts) (tkFoldCv (optT opts) (optK opts)) 0.2
+    subAlgo' = defaultSample Nothing . learn (testConfig algo opts) (tkFoldCv (optT opts) (optK opts)) 0.2
 
 data Algo = SvmAlgo | LogRegAlgo
   deriving Show
